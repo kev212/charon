@@ -221,6 +221,16 @@ async function fetchJupiterWalletPnl(walletAddress) {
   }
 }
 
+export function extractListingEvents(assetData) {
+  if (!assetData) return null;
+  return {
+    hasDexPaid: Boolean(assetData.hasDexPaid ?? assetData.dexPaid ?? false),
+    hasAds: Boolean(assetData.hasAds ?? assetData.ads ?? false),
+    hasBoost: Boolean(assetData.hasBoost ?? assetData.boost ?? false),
+    isTrending: Boolean(assetData.isTrending ?? assetData.trending ?? false),
+  };
+}
+
 export {
   jupiterStatsForInterval,
   normalizeJupiterTrendingRow,

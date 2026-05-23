@@ -197,6 +197,38 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_trade_intents_status ON trade_intents(status);
     CREATE INDEX IF NOT EXISTS idx_decision_logs_mint ON decision_logs(selected_mint);
     CREATE INDEX IF NOT EXISTS idx_signal_events_mint ON signal_events(mint);
+    CREATE TABLE IF NOT EXISTS cabal_clusters (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      label TEXT,
+      cluster_json TEXT NOT NULL,
+      first_detected_ms INTEGER NOT NULL,
+      last_active_ms INTEGER NOT NULL,
+      total_tokens_tracked INTEGER DEFAULT 0,
+      created_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS cabal_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      candidate_id INTEGER,
+      mint TEXT NOT NULL,
+      cluster_id INTEGER,
+      kind TEXT NOT NULL,
+      details_json TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cabal_clusters_label ON cabal_clusters(label);
+    CREATE TABLE IF NOT EXISTS dip_buy_states (
+      mint TEXT PRIMARY KEY,
+      strategy_id TEXT NOT NULL,
+      step TEXT NOT NULL DEFAULT 'watching',
+      planned_size_sol REAL NOT NULL,
+      executed_size_sol REAL NOT NULL DEFAULT 0,
+      first_entry_price REAL,
+      first_entry_at_ms INTEGER,
+      lowest_price REAL,
+      bounce_price REAL,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_learning_lessons_status ON learning_lessons(status, created_at_ms);
   `);
   ensureColumn('candidates', 'signal_key', 'TEXT');
@@ -236,6 +268,18 @@ export function initDb() {
     trending_interval: process.env.TRENDING_INTERVAL || '5m',
     trending_limit: process.env.TRENDING_LIMIT || '100',
     trending_order_by: process.env.TRENDING_ORDER_BY || 'volume',
+    reject_mint_active: process.env.REJECT_MINT_ACTIVE || 'false',
+    reject_freeze_active: process.env.REJECT_FREEZE_ACTIVE || 'false',
+    reject_cex_listed: process.env.REJECT_CEX_LISTED || 'true',
+    max_bundle_cluster_score: process.env.MAX_BUNDLE_CLUSTER_SCORE || '70',
+    max_clustered_top20_percent: process.env.MAX_CLUSTERED_TOP20_PERCENT || '80',
+    reject_high_cluster_risk: process.env.REJECT_HIGH_CLUSTER_RISK || 'false',
+    reject_known_cabal: process.env.REJECT_KNOWN_CABAL || 'false',
+    reject_boost_late: process.env.REJECT_BOOST_LATE || 'false',
+    dip_first_entry_pct: process.env.DIP_FIRST_ENTRY_PCT || '10',
+    dip_bounce_trigger_pct: process.env.DIP_BOUNCE_TRIGGER_PCT || '5',
+    dip_second_dip_tolerance_pct: process.env.DIP_SECOND_DIP_TOLERANCE_PCT || '10',
+    min_gmgn_fee_volume_ratio: process.env.MIN_GMGN_FEE_VOLUME_RATIO || '0.002',
     trending_min_volume_usd: process.env.TRENDING_MIN_VOLUME_USD || '0',
     trending_min_swaps: process.env.TRENDING_MIN_SWAPS || '0',
     trending_max_rug_ratio: process.env.TRENDING_MAX_RUG_RATIO || '0.3',
@@ -262,6 +306,7 @@ export function initDb() {
     min_saved_wallet_holders: 0,
     max_ath_distance_pct: 0,
     min_graduated_volume_usd: 0,
+    min_gmgn_fee_volume_ratio: 0.002,
     trending_min_volume_usd: 0,
     trending_min_swaps: 0,
     trending_max_rug_ratio: 0.3,
@@ -298,6 +343,7 @@ export function initDb() {
     trending_min_swaps: 0,
     trending_max_rug_ratio: 0.3,
     trending_max_bundler_rate: 0.5,
+    min_gmgn_fee_volume_ratio: 0.002,
     position_size_sol: 0.05,
     max_open_positions: 3,
     tp_percent: 30,
@@ -308,6 +354,9 @@ export function initDb() {
     partial_tp_at_percent: 0,
     partial_tp_sell_percent: 0,
     max_hold_ms: 0,
+    dip_first_entry_pct: 10,
+    dip_bounce_trigger_pct: 5,
+    dip_second_dip_tolerance_pct: 10,
     use_llm: true,
     llm_min_confidence: 60,
   }), ts);
@@ -326,6 +375,9 @@ export function initDb() {
     min_saved_wallet_holders: 0,
     max_ath_distance_pct: 0,
     min_graduated_volume_usd: 0,
+    min_gmgn_fee_volume_ratio: 0.002,
+    reject_mint_active: true,
+    reject_freeze_active: true,
     trending_min_volume_usd: 5000,
     trending_min_swaps: 100,
     trending_max_rug_ratio: 0.2,
@@ -362,6 +414,7 @@ export function initDb() {
     trending_min_swaps: 0,
     trending_max_rug_ratio: 0.5,
     trending_max_bundler_rate: 0.7,
+    min_gmgn_fee_volume_ratio: 0.002,
     position_size_sol: 0.05,
     max_open_positions: 5,
     tp_percent: 30,

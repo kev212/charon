@@ -61,6 +61,24 @@ export function compactCandidateForLlm(row) {
     },
     savedWalletExposure: c.savedWalletExposure,
     twitterNarrative: c.twitterNarrative,
+    tokenAuth: c.tokenAuth ? {
+      mintActive: c.tokenAuth.mintActive,
+      freezeActive: c.tokenAuth.freezeActive,
+    } : null,
+    feeToVolumeRatio: c.metrics?.gmgnFeeToVolumeRatio,
+    mcapTier: c.metrics?.mcapTier,
+    cabalActivity: c.cabalActivity ? {
+      isCabalActive: c.cabalActivity.isCabalActive,
+      totalSupplyControlled: c.cabalActivity.totalSupplyControlled,
+    } : null,
+    clusterAnalysis: c.clusterAnalysis ? {
+      clusterCount: c.clusterAnalysis.clusterCount,
+      topClusterPercent: c.clusterAnalysis.topClusterPercent,
+      rawTop20Percent: c.clusterAnalysis.rawTop20Percent,
+      clusteredTop20Percent: c.clusterAnalysis.clusteredTop20Percent,
+      effectiveConcentrationRisk: c.clusterAnalysis.effectiveConcentrationRisk,
+      warnings: c.clusterAnalysis.warnings,
+    } : null,
     filters: c.filters,
   };
 }
@@ -90,6 +108,11 @@ export async function decideCandidateBatch(rows, triggerCandidateId) {
     'Use PASS if the set is weak or unsafe.',
     'Chart data is ATH/range context. Do not penalize or reward a token only because 24h change is huge; new Pump tokens often do that.',
     'Use distance from ATH/range high and top-blast risk to decide whether entry is late.',
+    'Global fee-to-volume ratio below 0.25% may indicate wash trading or fake volume.',
+    'Active mint authority means the developer can mint unlimited new tokens, diluting holders.',
+    'Active freeze authority means the developer can freeze any holder\'s tokens.',
+    'Market cap tier context: new_pair (<100k) = pure chaos driven by momentum; micro_cap (100k-5M) = TA starts working; mid_cap (5M-50M) = serious players, structured plays; high_cap (50M-200M) = whale and narrative control; cex_listed (>200M) = professional market makers.',
+    'Holder percentage per wallet can be misleading due to multi-wallet clustering — one person may control many wallets.',
     'Confidence is your conviction from 0 to 100, not probability.',
   ].join(' ');
   const user = {

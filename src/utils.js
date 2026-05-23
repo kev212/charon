@@ -143,6 +143,15 @@ export function formatWindow(ms) {
   return `${Math.round(ms / 60_000)}m`;
 }
 
+export function classifyMcapTier(mcapUsd) {
+  if (!Number.isFinite(mcapUsd) || mcapUsd <= 0) return null;
+  if (mcapUsd < 100_000) return 'new_pair';
+  if (mcapUsd < 5_000_000) return 'micro_cap';
+  if (mcapUsd < 50_000_000) return 'mid_cap';
+  if (mcapUsd < 200_000_000) return 'high_cap';
+  return 'cex_listed';
+}
+
 export function makeFailureTracker(name, alertFn, threshold = 3) {
   let count = 0;
   return async (fn) => {
