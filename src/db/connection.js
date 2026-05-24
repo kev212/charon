@@ -201,12 +201,38 @@ export function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       label TEXT,
       cluster_json TEXT NOT NULL,
+      notes TEXT DEFAULT '',
       first_detected_ms INTEGER NOT NULL,
       last_active_ms INTEGER NOT NULL,
       total_tokens_tracked INTEGER DEFAULT 0,
-      created_at_ms INTEGER NOT NULL
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER
     );
     CREATE TABLE IF NOT EXISTS cabal_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      candidate_id INTEGER,
+      mint TEXT NOT NULL,
+      cluster_id INTEGER,
+      kind TEXT NOT NULL,
+      details_json TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS risk_addresses (
+      address TEXT PRIMARY KEY,
+      label TEXT,
+      risk_type TEXT,
+      notes TEXT,
+      evidence TEXT,
+      added_at_ms INTEGER,
+      expires_at_ms INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS risk_tokens (
+      mint TEXT PRIMARY KEY,
+      label TEXT,
+      risk_type TEXT,
+      notes TEXT,
+      added_at_ms INTEGER
+    );
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       candidate_id INTEGER,
       mint TEXT NOT NULL,
@@ -291,6 +317,14 @@ export function initDb() {
     reject_honeypot: process.env.REJECT_HONEYPOT || 'true',
     reject_low_social: process.env.REJECT_LOW_SOCIAL || 'false',
     max_scam_risk: process.env.MAX_SCAM_RISK || '80',
+    wallet_ping_enabled: process.env.WALLET_PING_ENABLED || 'false',
+    wallet_ping_min_sol_value: process.env.WALLET_PING_MIN_SOL_VALUE || '0.1',
+    wallet_ping_alert_cooldown_ms: process.env.WALLET_PING_ALERT_COOLDOWN_MS || '60000',
+    entry_confirmation_mode: process.env.ENTRY_CONFIRMATION_MODE || 'disabled',
+    use_advanced_sizing: process.env.USE_ADVANCED_SIZING || 'false',
+    sizing_use_kelly: process.env.SIZING_USE_KELLY || 'false',
+    sizing_min_size_sol: process.env.SIZING_MIN_SIZE_SOL || '0.01',
+    sizing_max_size_sol: process.env.SIZING_MAX_SIZE_SOL || '1.0',
   };
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [key, value] of Object.entries(defaults)) insert.run(key, value);

@@ -12,6 +12,7 @@ import {
 
 let liveWallet = null;
 let solanaConnection = null;
+let rpcPool = [];
 
 function parseKeypair(secret) {
   const value = String(secret || '').trim();
@@ -20,12 +21,49 @@ function parseKeypair(secret) {
   return Keypair.fromSecretKey(bs58.decode(value));
 }
 
+function buildRpcPool() {
+  const urls = [];
+  if (process.env.SOLANA_RPC_URLS) {
+    urls.push(...process.env.SOLANA_RPC_URLS.split(',').map(s => s.trim()).filter(Boolean));
+  }
+  if (!urls.length && SOLANA_RPC_URL) urls.push(SOLANA_RPC_URL);
+  return urls.map(url => ({
+    url,
+    healthy: true,
+    lastCheck: 0,
+    connection: new Connection(url, 'confirmed'),
+  }));
+}
+
+let rpcIndex = 0;
+
+function nextConnection() {
+  if (!rpcPool.length) rpcPool = buildRpcPool();
+  const now = Date.now();
+  // Find a healthy endpoint
+  for (let attempt = 0; attempt < rpcPool.length; attempt++) {
+    const ep = rpcPool[rpcIndex % rpcPool.length];
+    rpcIndex++;
+    // Recheck health every 30s
+    if (!ep.healthy && now - ep.lastCheck < 30_000) continue;
+    if (!ep.healthy) {
+      ep.lastCheck = now;
+      ep.connection.getHealth().then(() => { ep.healthy = true; }).catch(() => {});
+      continue;
+    }
+    return ep.connection;
+  }
+  // Fallback to first endpoint
+  return rpcPool[0].connection;
+}
+
 export function initLiveExecution() {
   if (!SOLANA_PRIVATE_KEY) return;
   try {
     liveWallet = parseKeypair(SOLANA_PRIVATE_KEY);
-    solanaConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
-    console.log(`[live] wallet loaded ${liveWallet.publicKey.toBase58()}`);
+    rpcPool = buildRpcPool();
+    solanaConnection = nextConnection();
+    console.log(`[live] wallet loaded ${liveWallet.publicKey.toBase58()} (${rpcPool.length} RPC(s))`);
   } catch (err) {
     liveWallet = null;
     solanaConnection = null;
@@ -37,15 +75,31 @@ export function liveWalletPubkey() {
   return liveWallet?.publicKey?.toBase58() || null;
 }
 
+async function withFailover(fn, retries = 2) {
+  let lastError;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      solanaConnection = nextConnection();
+      return await fn(solanaConnection);
+    } catch (err) {
+      lastError = err;
+      console.log(`[rpc] attempt ${i + 1} failed: ${err.message}`);
+    }
+  }
+  throw lastError;
+}
+
 export async function fetchLiveTokenBalance(mint) {
-  if (!liveWallet || !solanaConnection) return null;
+  if (!liveWallet) return null;
   try {
-    const accounts = await solanaConnection.getParsedTokenAccountsByOwner(
-      liveWallet.publicKey,
-      { mint: new PublicKey(mint) },
-      'confirmed',
-    );
-    return accounts.value[0]?.account?.data?.parsed?.info?.tokenAmount?.amount || null;
+    return await withFailover(async (conn) => {
+      const accounts = await conn.getParsedTokenAccountsByOwner(
+        liveWallet.publicKey,
+        { mint: new PublicKey(mint) },
+        'confirmed',
+      );
+      return accounts.value[0]?.account?.data?.parsed?.info?.tokenAmount?.amount || null;
+    });
   } catch (err) {
     console.log(`[live] token balance ${mint.slice(0, 8)}... ${err.message}`);
     return null;
@@ -53,13 +107,13 @@ export async function fetchLiveTokenBalance(mint) {
 }
 
 export function requireLiveExecution() {
-  if (!liveWallet || !solanaConnection) throw new Error('SOLANA_PRIVATE_KEY is required for live execution.');
+  if (!liveWallet) throw new Error('SOLANA_PRIVATE_KEY is required for live execution.');
   if (!JUPITER_API_KEY) throw new Error('JUPITER_API_KEY is required for live execution.');
 }
 
 export async function liveWalletBalanceLamports() {
   requireLiveExecution();
-  return solanaConnection.getBalance(liveWallet.publicKey, 'confirmed');
+  return withFailover((conn) => conn.getBalance(liveWallet.publicKey, 'confirmed'));
 }
 
 async function jupiterOrder({ inputMint, outputMint, amount }) {

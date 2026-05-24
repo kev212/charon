@@ -7,6 +7,7 @@ import { monitorPositions } from './execution/positions.js';
 import { processCandidateFromSignals, maybeProcessDegenCandidate } from './pipeline/orchestrator.js';
 import { sendTelegram } from './telegram/send.js';
 import { makeFailureTracker } from './utils.js';
+import { boolSetting, numSetting } from './db/settings.js';
 
 setDefaultResultOrder('ipv4first');
 validateConfig();
@@ -60,4 +61,25 @@ export async function startCharon() {
   // Position monitoring runs in both modes
   const trackPositions = makeFailureTracker('position monitor', (msg) => sendTelegram(msg));
   setInterval(() => trackPositions(() => monitorPositions()), POSITION_CHECK_MS);
+
+  // Wallet ping monitor (optional, interval based)
+  if (boolSetting('wallet_ping_enabled', false)) {
+    const { monitorSavedWallets } = await import('./monitors/walletTracker.js');
+    const trackWalletPing = makeFailureTracker('wallet ping', (msg) => sendTelegram(msg));
+    const pingInterval = Number(numSetting('wallet_ping_interval_ms', 120_000));
+    setInterval(() => trackWalletPing(async () => {
+      const alerts = await monitorSavedWallets();
+      for (const a of alerts) {
+        const lines = [
+          `🔔 <b>Wallet Ping</b> — ${a.wallet}`,
+          `Activity: ${a.activity.type}`,
+          a.activity.solDelta ? `SOL change: ${(a.activity.solDelta / 1e9).toFixed(6)} SOL` : null,
+          a.smartMoney ? `Smart score: ${a.smartMoney.score}/100 (${a.smartMoney.level})` : null,
+        ].filter(Boolean).join('\n');
+        await sendTelegram(lines);
+      }
+    }), pingInterval);
+  }
+
+  // Entry confirmation + sizing not started here — they're pipeline-integrated
 }

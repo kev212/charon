@@ -29,6 +29,7 @@ import { handleCallback, editMenuMessage } from './callbacks.js';
 import { consumeNumericFilterInput } from './input.js';
 import { runLearning, sendLessons } from '../learning/commands.js';
 import { fetchWalletPnl } from '../enrichment/wallets.js';
+import { addCabalCluster, removeCabalCluster, cabalClustersList } from '../anti/cabal.js';
 
 export async function handleMessage(msg) {
   const text = (msg.text || '').trim();
@@ -60,8 +61,9 @@ export async function handleMessage(msg) {
     }
     const strat = strategyById(id);
     if (!strat) return bot.sendMessage(chatId, `Strategy "${id}" not found.`);
-    const numKeys = new Set(['tp_percent', 'sl_percent', 'position_size_sol', 'max_open_positions', 'min_mcap_usd', 'max_mcap_usd', 'min_holders', 'max_top20_holder_percent', 'trailing_percent', 'partial_tp_at_percent', 'partial_tp_sell_percent', 'max_hold_ms', 'llm_min_confidence', 'min_source_count', 'min_fee_claim_sol', 'min_gmgn_total_fee_sol', 'max_ath_distance_pct', 'token_age_max_ms', 'trending_min_volume_usd', 'trending_min_swaps', 'trending_max_rug_ratio', 'trending_max_bundler_rate', 'min_saved_wallet_holders', 'min_graduated_volume_usd', 'max_bundle_risk', 'max_scam_risk', 'min_organic_volume_score']);
-    const boolKeys = new Set(['trailing_enabled', 'partial_tp', 'use_llm', 'require_fee_claim', 'reject_bundle_detected', 'reject_honeypot', 'reject_wash_trading', 'reject_mint_active', 'reject_freeze_active', 'reject_low_social']);
+    const numKeys = new Set(['tp_percent', 'sl_percent', 'position_size_sol', 'max_open_positions', 'min_mcap_usd', 'max_mcap_usd', 'min_holders', 'max_top20_holder_percent', 'trailing_percent', 'partial_tp_at_percent', 'partial_tp_sell_percent', 'max_hold_ms', 'llm_min_confidence', 'min_source_count', 'min_fee_claim_sol', 'min_gmgn_total_fee_sol', 'max_ath_distance_pct', 'token_age_max_ms', 'trending_min_volume_usd', 'trending_min_swaps', 'trending_max_rug_ratio', 'trending_max_bundler_rate', 'min_saved_wallet_holders', 'min_graduated_volume_usd', 'max_bundle_risk', 'max_scam_risk', 'min_organic_volume_score', 'sizing_min_size_sol', 'sizing_max_size_sol']);
+    const boolKeys = new Set(['trailing_enabled', 'partial_tp', 'use_llm', 'require_fee_claim', 'reject_bundle_detected', 'reject_honeypot', 'reject_wash_trading', 'reject_mint_active', 'reject_freeze_active', 'reject_low_social', 'use_advanced_sizing', 'sizing_use_kelly']);
+    const stringKeys = new Set(['entry_confirmation_mode', 'wallet_selection']);
     const newConfig = { ...strat };
     delete newConfig.id;
     delete newConfig.name;
@@ -69,6 +71,8 @@ export async function handleMessage(msg) {
       newConfig[key] = Number(value);
     } else if (boolKeys.has(key)) {
       newConfig[key] = value === 'true' || value === '1' || value === 'yes';
+    } else if (stringKeys.has(key)) {
+      newConfig[key] = value;
     } else {
       newConfig[key] = value;
     }
@@ -104,6 +108,47 @@ export async function handleMessage(msg) {
     return bot.sendMessage(chatId, `Removed ${label}.`);
   }
   if (text.startsWith('/wallets')) return handleCallback({ id: 'manual', data: 'menu:wallets', message: { chat: { id: chatId } } });
+  if (text.startsWith('/cabaladd')) {
+    const parts = text.split(/\s+/);
+    const label = parts[1];
+    const addresses = parts.slice(2);
+    if (!label || !addresses.length) return bot.sendMessage(chatId, 'Usage: /cabaladd <label> <address1> <address2> ...');
+    const result = addCabalCluster(label, addresses);
+    return bot.sendMessage(chatId, `Cabal cluster "${label}" ${result.updated ? 'updated' : 'added'} (${addresses.length} wallets).`);
+  }
+  if (text.startsWith('/cabalremove')) {
+    const label = text.split(/\s+/)[1];
+    if (!label) return bot.sendMessage(chatId, 'Usage: /cabalremove <label_or_id>');
+    removeCabalCluster(label);
+    return bot.sendMessage(chatId, `Removed cabal cluster "${label}".`);
+  }
+  if (text.startsWith('/caballist')) {
+    const clusters = cabalClustersList();
+    if (!clusters.length) return bot.sendMessage(chatId, 'No cabal clusters defined.');
+    const lines = clusters.map(c =>
+      `• <b>${escapeHtml(c.label)}</b> (id: ${c.id})\n  ${c.wallet_count} wallets · ${c.total_tokens_tracked} tokens tracked · ${c.notes ? escapeHtml(c.notes) : 'no notes'}`
+    );
+    return bot.sendMessage(chatId, `🔍 <b>Cabal Clusters</b>\n\n${lines.join('\n\n')}`, { parse_mode: 'HTML' });
+  }
+  if (text.startsWith('/riskadd')) {
+    const parts = text.split(/\s+/);
+    const address = parts[1];
+    const type = parts[2] || 'unknown';
+    const label = parts.slice(3).join(' ') || address.slice(0, 8);
+    if (!address) return bot.sendMessage(chatId, 'Usage: /riskadd <address> <type> <label>');
+    db.prepare(`
+      INSERT INTO risk_addresses (address, label, risk_type, notes, evidence, added_at_ms)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(address) DO UPDATE SET label = excluded.label, risk_type = excluded.risk_type
+    `).run(address, label, type, '', '', Date.now());
+    return bot.sendMessage(chatId, `Added ${address.slice(0, 8)}... as "${type}" (${label}).`);
+  }
+  if (text.startsWith('/riskremove')) {
+    const addr = text.split(/\s+/)[1];
+    if (!addr) return bot.sendMessage(chatId, 'Usage: /riskremove <address>');
+    db.prepare('DELETE FROM risk_addresses WHERE address = ?').run(addr);
+    return bot.sendMessage(chatId, `Removed risk entry for ${addr.slice(0, 8)}...`);
+  }
   if (text.startsWith('/setfilter')) {
     const { key, value } = parseSetFilter(text);
     const valid = new Set([
@@ -251,6 +296,11 @@ export function setupTelegram() {
     { command: 'walletadd', description: 'Save wallet for exposure/PnL' },
     { command: 'walletremove', description: 'Remove saved wallet' },
     { command: 'wallets', description: 'List saved wallets' },
+    { command: 'cabaladd', description: 'Add cabal cluster with addresses' },
+    { command: 'cabalremove', description: 'Remove cabal cluster' },
+    { command: 'caballist', description: 'List all cabal clusters' },
+    { command: 'riskadd', description: 'Add address to risk DB' },
+    { command: 'riskremove', description: 'Remove address from risk DB' },
   ]).catch(err => console.log(`[telegram] commands ${err.message}`));
 
   bot.on('callback_query', query => handleCallback(query).catch(err => console.log(`[callback] ${err.message}`)));

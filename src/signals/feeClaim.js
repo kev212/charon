@@ -67,9 +67,21 @@ export function startWebsocket() {
   const wsUrl = SOLANA_WS_URL;
   let ws;
   let pingTimer;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_DELAY = 32_000;
+  let pipelinePaused = false;
+
+  function getReconnectDelay() {
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
+    reconnectAttempts++;
+    return delay;
+  }
+
   function connect() {
     ws = new WebSocket(wsUrl);
     ws.on('open', () => {
+      reconnectAttempts = 0;
+      pipelinePaused = false;
       console.log('[ws] connected');
       for (const [id, program] of [[1, PUMP_PROGRAM], [2, PUMP_AMM]]) {
         ws.send(JSON.stringify({
@@ -97,8 +109,13 @@ export function startWebsocket() {
     });
     ws.on('close', () => {
       clearInterval(pingTimer);
-      console.log('[ws] closed, reconnecting in 5s');
-      setTimeout(connect, 5000);
+      pipelinePaused = true;
+      const delay = getReconnectDelay();
+      console.log(`[ws] closed, reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
+      setTimeout(connect, delay);
+      if (reconnectAttempts >= 3) {
+        console.log('[ws] 3+ reconnects failed — pipeline paused. Resume on next connect.');
+      }
     });
     ws.on('error', error => console.log(`[ws] ${error.message}`));
   }
