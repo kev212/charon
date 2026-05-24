@@ -169,13 +169,34 @@ async function fetchGmgnTokenInfo(mint, useCache = true) {
 }
 
 function normalizedTrendingRows(payload) {
-  const rows = payload?.data?.data?.rank
-    || payload?.data?.rank
-    || payload?.rank
-    || payload?.data?.data
-    || payload?.data
-    || [];
-  return Array.isArray(rows) ? rows : [];
+  // ... existing code ...
+}
+
+function computeBundleScoreFromGmgn(info) {
+  if (!info) return null;
+  const snipersCount = info.snipers_count || info.sniper_count || 0;
+  const snipersBalance = Number(info.snipers_balance || info.sniper_balance || 0);
+  const supply = Number(info.total_supply || 1);
+  const snipersBalancePct = supply > 0 ? (snipersBalance / supply) * 100 : 0;
+  const devHoldPct = info.dev_hold_percent || 0;
+  const top10HoldPct = info.top10_hold_percent || info.holders?.top10_percent || 0;
+
+  let score = 0;
+  if (snipersCount > 15) score += 35;
+  else if (snipersCount > 8) score += 25;
+  else if (snipersCount > 3) score += 15;
+  if (snipersBalancePct > 60) score += 30;
+  else if (snipersBalancePct > 40) score += 20;
+  else if (snipersBalancePct > 20) score += 10;
+  if (devHoldPct < 5 && top10HoldPct > 80) score += 25;
+  else if (devHoldPct < 10 && top10HoldPct > 70) score += 15;
+
+  return {
+    score: Math.min(score, 100),
+    snipersCount,
+    snipersBalancePct: Math.round(snipersBalancePct * 100) / 100,
+    bundleLikely: score >= 50,
+  };
 }
 
 export {
@@ -187,4 +208,5 @@ export {
   marketCapFromGmgn,
   tokenPriceFromGmgn,
   normalizedTrendingRows,
+  computeBundleScoreFromGmgn,
 };

@@ -79,6 +79,17 @@ export function compactCandidateForLlm(row) {
       effectiveConcentrationRisk: c.clusterAnalysis.effectiveConcentrationRisk,
       warnings: c.clusterAnalysis.warnings,
     } : null,
+    bundleRisk: c.bundleRisk ? {
+      bundleRisk: c.bundleRisk.bundleRisk,
+      bundleDetected: c.bundleRisk.bundleDetected,
+      confidence: c.bundleRisk.confidence,
+    } : null,
+    organicVolume: c.organicVolume ? {
+      organicScore: c.organicVolume.organicScore,
+      washTradingSuspected: c.organicVolume.washTradingSuspected,
+    } : null,
+    honeypotRisk: c.honeypot?.honeypotRisk || null,
+    scamRisk: c.metrics?.scamRisk || null,
     filters: c.filters,
   };
 }
@@ -113,6 +124,10 @@ export async function decideCandidateBatch(rows, triggerCandidateId) {
     'Active freeze authority means the developer can freeze any holder\'s tokens.',
     'Market cap tier context: new_pair (<100k) = pure chaos driven by momentum; micro_cap (100k-5M) = TA starts working; mid_cap (5M-50M) = serious players, structured plays; high_cap (50M-200M) = whale and narrative control; cex_listed (>200M) = professional market makers.',
     'Holder percentage per wallet can be misleading due to multi-wallet clustering — one person may control many wallets.',
+    'Bundle risk indicates potential coordinated manipulation. High bundle risk + high scam risk = STRONG PASS.',
+    'Wash trading suspected means volume may be artificially inflated. Treat such tokens with extreme caution.',
+    'Honeypot risk means the token cannot be sold back — this is a critical danger sign.',
+    'The composite scam risk score aggregates mint/freeze authority, honeypot status, social presence, and deployer history.',
     'Confidence is your conviction from 0 to 100, not probability.',
   ].join(' ');
   const user = {

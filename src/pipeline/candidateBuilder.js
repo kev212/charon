@@ -1,11 +1,14 @@
 import { now, firstPositiveNumber, marketCapFromGmgn, tokenPriceFromGmgn, lamToSol, classifyMcapTier } from '../utils.js';
 import { activeStrategy } from '../db/settings.js';
-import { fetchGmgnTokenInfo } from '../enrichment/gmgn.js';
+import { fetchGmgnTokenInfo, computeBundleScoreFromGmgn } from '../enrichment/gmgn.js';
 import { fetchJupiterAsset, fetchJupiterHolders, fetchJupiterChartContext, fetchSolUsdPrice, extractListingEvents } from '../enrichment/jupiter.js';
 import { fetchSavedWalletExposure, detectCabalActivity } from '../enrichment/wallets.js';
 import { fetchTwitterNarrative } from '../enrichment/twitter.js';
 import { fetchTokenAuth } from '../enrichment/tokenAuth.js';
 import { computeClusterScore } from '../enrichment/clustering.js';
+import { computeOrganicVolume, computeFeeToLiquidityRatio } from '../enrichment/fees.js';
+import { detectBundleFromTx, analyzeEarlyBlockDensity, aggregateBundleRisk } from '../anti/bundle.js';
+import { detectHoneypot, validateSocialMedia, computeCompositeScamRisk } from '../anti/scam.js';
 import { gmgnLink } from '../format.js';
 
 let solPriceCache = { price: null, at: 0 };
@@ -138,6 +141,42 @@ export function filterCandidate(candidate) {
     failures.push(`saved wallet holders: ${savedCount} < ${strat.min_saved_wallet_holders}`);
   }
 
+  // Organic volume / wash trading
+  if (candidate.organicVolume) {
+    const ov = candidate.organicVolume;
+    if (strat.reject_wash_trading && ov.washTradingSuspected) {
+      failures.push(`wash trading suspected: ${ov.washReasons.join(', ')}`);
+    }
+    if (strat.min_organic_volume_score > 0 && ov.organicScore != null && ov.organicScore < strat.min_organic_volume_score) {
+      failures.push(`organic volume: ${ov.organicScore} < ${strat.min_organic_volume_score}`);
+    }
+  }
+
+  // Bundle risk (composite from tx + gmgn + early block)
+  if (candidate.metrics?.bundleDetected && strat.reject_bundle_detected) {
+    failures.push(`bundle detected: risk ${candidate.metrics.bundleRisk}`);
+  }
+  if (strat.max_bundle_risk > 0 && candidate.metrics?.bundleRisk >= strat.max_bundle_risk) {
+    failures.push(`bundle risk: ${candidate.metrics.bundleRisk} >= ${strat.max_bundle_risk}`);
+  }
+
+  // Honeypot risk
+  if (candidate.honeypot?.honeypotRisk && strat.reject_honeypot) {
+    failures.push('honeypot detected: token sell simulation failed');
+  }
+
+  // Deployer history (checked at execution time, not here)
+
+  // Social media risk
+  if (candidate.socialCheck?.lowSocialRisk && strat.reject_low_social) {
+    failures.push('low social media presence');
+  }
+
+  // Composite scam risk
+  if (strat.max_scam_risk > 0 && candidate.metrics?.scamRisk != null && candidate.metrics.scamRisk > strat.max_scam_risk) {
+    failures.push(`scam risk: ${candidate.metrics.scamRisk} > ${strat.max_scam_risk}`);
+  }
+
   // Dex Paid / Boost timing
   if (candidate.listingEvents) {
     if (strat.reject_boost_late && candidate.listingEvents.hasBoost && candidate.metrics.mcapTier === 'high_cap') {
@@ -186,6 +225,43 @@ export async function buildCandidate({ mint, fee = null, signature = null, gradu
   const tokenAuth = await fetchTokenAuth(mint);
   const clusterAnalysis = await computeClusterScore(holders);
   const cabalActivity = await detectCabalActivity(mint, holders);
+
+  // Bundle detection via transaction analysis (lightweight: 1 RPC)
+  const bundleTx = await detectBundleFromTx(signature, mint);
+
+  // Organic volume intelligence (0 RPC, uses existing GMGN/Jupiter data)
+  const organicVolume = computeOrganicVolume(gmgn, jupiterAsset, trendingToken);
+
+  // Priority fee profile (1 RPC, lightweight)
+  const { estimatePriorityFeeProfile } = await import('../enrichment/fees.js');
+  const priorityFee = await estimatePriorityFeeProfile(mint).catch(() => null);
+
+  // Honeypot simulation (2 Jupiter quote API calls)
+  const honeypot = await detectHoneypot(mint).catch(() => null);
+
+  // Social media validity (0 RPC)
+  const socialCheck = validateSocialMedia(gmgn || graduatedCoin || jupiterAsset || {});
+
+  // GMGN bundle signals from already-fetched gmgn data (0 RPC)
+  const gmgnBundleScore = gmgn ? computeBundleScoreFromGmgn(gmgn) : null;
+  const bundleRisk = aggregateBundleRisk({ txAnalysis: bundleTx, earlyBlock: null, gmgnScore: gmgnBundleScore });
+
+  // Composite scam risk (0 RPC after all checks)
+  const scamRisk = computeCompositeScamRisk(tokenAuth, honeypot, socialCheck, null);
+
+  // Early block density (1 RPC, only run if already suspicious from tx or gmgn)
+  let earlyBlock = null;
+  if (bundleRisk.bundleRisk > 40 || scamRisk > 50) {
+    earlyBlock = await analyzeEarlyBlockDensity(mint).catch(() => null);
+    if (earlyBlock) {
+      bundleRisk.layers.earlyBlock = earlyBlock;
+      const updated = aggregateBundleRisk(bundleRisk.layers);
+      bundleRisk.bundleRisk = updated.bundleRisk;
+      bundleRisk.bundleDetected = updated.bundleDetected;
+      bundleRisk.confidence = updated.confidence;
+      bundleRisk.layerCount = updated.layerCount;
+    }
+  }
   const priceUsd = firstPositiveNumber(tokenPriceFromGmgn(gmgn), jupiterAsset?.usdPrice, trendingToken?.price);
   const marketCapUsd = firstPositiveNumber(
     marketCapFromGmgn(gmgn),
@@ -237,6 +313,12 @@ export async function buildCandidate({ mint, fee = null, signature = null, gradu
       trendingSmartDegenCount: Number(trendingToken?.smart_degen_count ?? 0),
       gmgnFeeToVolumeRatio: feeToVolumeRatio,
       mcapTier,
+      organicVolumeScore: organicVolume?.organicScore,
+      washTradingSuspected: organicVolume?.washTradingSuspected,
+      priorityFeeProfile: priorityFee?.profile || null,
+      scamRisk: scamRisk,
+      bundleRisk: bundleRisk.bundleRisk,
+      bundleDetected: bundleRisk.bundleDetected,
     },
     signals: {
       route: signalRoute,
@@ -264,6 +346,11 @@ export async function buildCandidate({ mint, fee = null, signature = null, gradu
     clusterAnalysis,
     cabalActivity,
     listingEvents,
+    bundleRisk,
+    organicVolume,
+    honeypot,
+    socialCheck,
+    priorityFee,
     createdAtMs: now(),
   };
   candidate.filters = filterCandidate(candidate);

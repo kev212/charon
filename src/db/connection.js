@@ -284,6 +284,13 @@ export function initDb() {
     trending_min_swaps: process.env.TRENDING_MIN_SWAPS || '0',
     trending_max_rug_ratio: process.env.TRENDING_MAX_RUG_RATIO || '0.3',
     trending_max_bundler_rate: process.env.TRENDING_MAX_BUNDLER_RATE || '0.5',
+    reject_wash_trading: process.env.REJECT_WASH_TRADING || 'true',
+    min_organic_volume_score: process.env.MIN_ORGANIC_VOLUME_SCORE || '0',
+    reject_bundle_detected: process.env.REJECT_BUNDLE_DETECTED || 'true',
+    max_bundle_risk: process.env.MAX_BUNDLE_RISK || '70',
+    reject_honeypot: process.env.REJECT_HONEYPOT || 'true',
+    reject_low_social: process.env.REJECT_LOW_SOCIAL || 'false',
+    max_scam_risk: process.env.MAX_SCAM_RISK || '80',
   };
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [key, value] of Object.entries(defaults)) insert.run(key, value);

@@ -125,6 +125,31 @@ export async function handleApprovedBuy(selectedRow, decision, batchId, rows = [
   const mode = tradingMode();
   const freshSelectedRow = await refreshCandidateForExecution(selectedRow);
   const executionRows = rows.map(row => row.id === freshSelectedRow.id ? freshSelectedRow : row);
+
+  // Deep scam check: deployer history (expensive, only for approved candidates)
+  const deployerAddress = freshSelectedRow.candidate?.tokenAuth?.mintAuthority
+    || freshSelectedRow.candidate?.holders?.holders?.[0]?.address;
+  if (deployerAddress) {
+    const { fetchDeployerHistory, computeCompositeScamRisk } = await import('../anti/scam.js');
+    const deployerHistory = await fetchDeployerHistory(deployerAddress).catch(() => null);
+    if (deployerHistory) {
+      const deepScamRisk = computeCompositeScamRisk(
+        freshSelectedRow.candidate.tokenAuth,
+        freshSelectedRow.candidate.honeypot,
+        freshSelectedRow.candidate.socialCheck,
+        deployerHistory
+      );
+      if (deepScamRisk > (freshSelectedRow.candidate.metrics?.scamRisk || 0)) {
+        freshSelectedRow.candidate.metrics = freshSelectedRow.candidate.metrics || {};
+        freshSelectedRow.candidate.metrics.scamRisk = deepScamRisk;
+        freshSelectedRow.candidate.metrics.deployerHistory = deployerHistory;
+        freshSelectedRow.candidate.deployerHistory = deployerHistory;
+        // Re-run filters with updated scam risk
+        freshSelectedRow.candidate.filters = filterCandidate(freshSelectedRow.candidate);
+      }
+    }
+  }
+
   if (!freshSelectedRow.candidate.filters?.passed) {
     updateCandidateStatus(freshSelectedRow.id, 'stale_rejected');
     logDecisionEvent({

@@ -60,6 +60,19 @@ export function candidateSummary(candidate, decision = null) {
     ].join(' · ') : null,
     candidate.feeClaim ? `Fee claim: <b>${fmtSol(candidate.feeClaim.distributedSol)} SOL</b>` : null,
     candidate.twitterNarrative?.text ? `Narrative: ${escapeHtml(candidate.twitterNarrative.text.slice(0, 220))}` : null,
+    // Risk indicators
+    candidate.tokenAuth ? [
+      'Auth:',
+      candidate.tokenAuth.mintActive ? '🔴 mint on' : '🟢 mint off',
+      candidate.tokenAuth.freezeActive ? '🔴 freeze on' : '🟢 freeze off',
+    ].join(' ') : null,
+    candidate.metrics?.bundleDetected || candidate.metrics?.bundleRisk > 0 ? `Bundle: <b>${candidate.metrics.bundleRisk}/100</b>` : null,
+    candidate.metrics?.scamRisk > 0 ? `Scam risk: <b>${candidate.metrics.scamRisk}/100</b>` : null,
+    candidate.honeypot?.honeypotRisk ? '⚠️ Honeypot risk detected' : null,
+    candidate.organicVolume?.organicScore != null ? `Vol health: <b>${candidate.organicVolume.organicScore}/100</b>${candidate.organicVolume.washTradingSuspected ? ' ⚠️ wash' : ''}` : null,
+    candidate.metrics?.mcapTier ? `Tier: <b>${candidate.metrics.mcapTier}</b>` : null,
+    candidate.clusterAnalysis?.warnings?.length ? `Cluster: ${candidate.clusterAnalysis.warnings.map(w => `⚠️ ${escapeHtml(w)}`).join(', ')}` : null,
+    candidate.cabalActivity?.isCabalActive ? `⚠️ Cabal: ${candidate.cabalActivity.cabalClusters.map(c => c.label).join(', ')} (${candidate.cabalActivity.totalSupplyControlled.toFixed(1)}% supply)` : null,
     decision ? `LLM: <b>${escapeHtml(decision.verdict)}</b> ${fmtPct(decision.confidence)} — ${escapeHtml(decision.reason || '')}` : null,
     candidate.filters.passed ? null : `Filtered: ${escapeHtml(candidate.filters.failures.join('; '))}`,
   ];
@@ -71,8 +84,14 @@ export function compactCandidateLine(row, index = null) {
   const prefix = index == null ? '' : `${index}. `;
   const name = candidate.token?.symbol || candidate.token?.name || short(candidate.token?.mint || '');
   const signal = candidate.signals?.label || signalLabel(candidate.signals);
+  const riskTags = [];
+  if (candidate.metrics?.bundleDetected) riskTags.push(`bundle:${candidate.metrics.bundleRisk}`);
+  if (candidate.metrics?.scamRisk > 50) riskTags.push(`scam:${candidate.metrics.scamRisk}`);
+  if (candidate.honeypot?.honeypotRisk) riskTags.push('honeypot');
+  if (candidate.organicVolume?.washTradingSuspected) riskTags.push('wash');
+  const riskPart = riskTags.length ? ` [${riskTags.join('|')}]` : '';
   return [
-    `${prefix}<b>${escapeHtml(name)}</b>`,
+    `${prefix}<b>${escapeHtml(name)}</b>${riskPart}`,
     `<a href="${gmgnLink(candidate.token.mint)}">${short(candidate.token.mint)}</a>`,
     escapeHtml(signal),
     `mcap ${fmtUsd(candidate.metrics?.marketCapUsd)}`,
